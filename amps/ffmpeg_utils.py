@@ -375,16 +375,6 @@ def get_or_start_stream_process(
                 elif output_format == 'audio':
                     output_target = 'pipe:1'
                     output_kwargs = _build_audio_only_kwargs(output_kwargs)
-                elif output_format == 'mse':
-                    output_target = 'pipe:1'
-                    output_kwargs.setdefault('format', 'mp4')
-                    movflags = output_kwargs.get('movflags')
-                    default_flags = 'frag_keyframe+empty_moov+default_base_moof'
-                    output_kwargs['movflags'] = f"{movflags}+{default_flags}" if movflags else default_flags
-                    output_kwargs.setdefault('reset_timestamps', 1)
-                elif output_format in {'websocket', 'ts'}:
-                    output_target = 'pipe:1'
-                    output_kwargs.setdefault('format', 'mpegts')
 
                 output_stream = ffmpeg.output(input_stream, output_target, **output_kwargs)
                 if extra_global_args:

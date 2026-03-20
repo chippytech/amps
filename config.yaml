@@ -91,10 +91,3 @@ ffmpeg_profiles:
     acodec: "aac"
     b:a: "192k"
     format: "mpegts"
-
-  mse_fragmented:
-    vcodec: "libx264"
-    preset: "veryfast"
-    acodec: "aac"
-    b:a: "128k"
-    output_format: "mse"   # Emits fragmented MP4 for browser MSE pipelines

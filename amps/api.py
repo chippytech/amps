@@ -178,19 +178,6 @@ def _validate_adaptive_bitrates(adaptive_bitrates, ffmpeg_profiles):
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
-
-@api_bp.route('/plugins', methods=['GET'])
-def list_plugins():
-    """Lists loaded plugins and any that failed to initialize."""
-
-    return jsonify(
-        {
-            'loaded': current_app.config.get('loaded_plugins', []),
-            'failed': current_app.config.get('failed_plugins', []),
-        }
-    )
-
-
 @api_bp.route('/streams', methods=['GET'])
 def get_streams():
     """Returns the list of all configured streams."""

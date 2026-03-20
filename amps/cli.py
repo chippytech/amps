@@ -3,20 +3,10 @@
 import click
 import logging
 import sys
-from amps import __version__
 from amps.config_loader import load_config
 from amps.server import create_app
-from amps.updater import (
-    DEFAULT_REPO,
-    fetch_latest_release_tag,
-    get_installed_version,
-    install_from_github,
-    is_newer_version,
-    normalize_version,
-)
 
 @click.group()
-@click.version_option(__version__)
 def main_cli():
     """
     Amps - Advanced Media Playlist Server
@@ -117,50 +107,6 @@ def list_command(config):
 
         logo = stream.get('logo') or "—"
         click.echo(f"  - ID: {stream['id']}, Name: {stream['name']}, Profile: {profile_label}, Logo: {logo}")
-
-
-@main_cli.command('update')
-@click.option('--repo', default=DEFAULT_REPO, show_default=True, help='GitHub repository to pull updates from (owner/repo).')
-def update_command(repo):
-    """Check for the latest GitHub release and upgrade the package via pip."""
-
-    current_version = get_installed_version()
-    click.echo(f"Current Amps version: {current_version}")
-
-    try:
-        latest_tag = fetch_latest_release_tag(repo)
-    except Exception as exc:  # pragma: no cover - network dependent
-        logging.error("Unable to check for updates: %s", exc)
-        sys.exit(1)
-
-    if not latest_tag:
-        logging.error("No release information found for %s", repo)
-        sys.exit(1)
-
-    latest_version = normalize_version(latest_tag)
-
-    if not latest_version:
-        logging.error("Latest release tag %s is not a valid version", latest_tag)
-        sys.exit(1)
-
-    click.echo(f"Latest release: {latest_version} (tag {latest_tag})")
-
-    if not is_newer_version(current_version, latest_version):
-        click.echo("You are already running the latest version.")
-        return
-
-    click.echo(f"Updating Amps to {latest_version}...")
-    result = install_from_github(latest_tag, repo)
-
-    if result.returncode != 0:
-        logging.error("Update failed with exit code %s", result.returncode)
-        if result.stderr:
-            click.echo(result.stderr)
-        sys.exit(result.returncode)
-
-    if result.stdout:
-        click.echo(result.stdout)
-    click.echo("Update complete. Run `amps --version` to verify the installed version.")
 
 if __name__ == '__main__':
     main_cli()

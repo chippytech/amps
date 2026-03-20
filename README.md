@@ -6,7 +6,6 @@
 </div>
 <hr>
 
-[Visit the project website](https://librenetworks.org/amps)
 
 **Amps** is a Flask-based server that dynamically generates and serves `.m3u` playlists, relays or transcodes media streams using **FFmpeg**, and allows for easy configuration through a `config.yaml` file.
 
@@ -19,7 +18,6 @@ It's designed to be a developer-friendly, modular, and robust solution for perso
 - **Dynamic M3U Playlists:** Serves a `/playlist.m3u` file compatible with most media players (VLC, Kodi, etc.) complete with channel names, logos, and custom metadata.
 - **FFmpeg Engine:** Relays streams (`copy` codec) or transcodes them on-the-fly to different bitrates, resolutions, or formats.
 - **Multi-Protocol Outputs:** Generate HLS (and LL-HLS), MPEG-DASH, RTSP, or raw TS outputs from the same FFmpeg process.
-- **Browser-Friendly Delivery:** Stream over WebSockets or serve fragmented MP4 suitable for Media Source Extensions (MSE).
 - **Static Manifests:** HLS playlists and DASH manifests are written to a temp media directory and served via `/hls/<id>/index.m3u8` and `/dash/<id>/manifest.mpd`.
 - **yt-dlp Integration:** Resolve complex streaming services (YouTube, Twitch, etc.) into direct FFmpeg inputs on demand.
 - **YAML Configuration:** All streams and FFmpeg profiles are defined in a simple, human-readable `config.yaml`.
@@ -36,7 +34,6 @@ It's designed to be a developer-friendly, modular, and robust solution for perso
 - **Containerized:** Includes a `Dockerfile` for easy, production-ready deployment.
 - **CLI Interface:** Manage the server with simple commands like `amps serve` and `amps list`.
 - **Scheduled Streams:** Define time-bound channels that automatically activate and retire using APScheduler.
-- **Plugin Hooks:** Load custom plugins that attach new API endpoints or behaviors without modifying core code.
 
 ## Architecture
 
@@ -82,16 +79,6 @@ Amps consists of several key components:
     ```bash
     python -m amps serve
     ```
-
-### Updating
-
-Amps can self-update to the latest GitHub release with:
-
-```bash
-amps update
-```
-
-Add the `--repo` flag to point at a fork (format: `owner/repo`).
 
 ### 3. Docker Deployment (recommended for production)
 
@@ -160,15 +147,6 @@ When a stream uses an HLS or DASH output profile, manifests and media segments a
 
 The base temp directory can be overridden via `media_root` in `config.yaml`. Each stream/variant gets its own subfolder, allowing multiple clients to reuse the same FFmpeg process.
 
-### WebSockets and MSE playback
-
-For browser-first players you can request a WebSocket transport instead of raw HTTP:
-
-- `ws://<server_ip>:5000/ws/<id>?token=<token>`
-- Optional `variant` query strings are respected just like `/stream/<id>`.
-
-If your FFmpeg profile sets `output_format: mse`, Amps will emit fragmented MP4 with `movflags=frag_keyframe+empty_moov+default_base_moof`, which drops cleanly into Media Source Extensions pipelines.
-
 ### Audio-Only Output
 
 Every stream can also be listened to in audio-only form. The `/audio/<id>` endpoint starts (or reuses) an FFmpeg process that strips the video track and outputs AAC by default. This is useful for low-bandwidth scenarios or podcast-style playback.
@@ -179,41 +157,6 @@ Every stream can also be listened to in audio-only form. The `/audio/<id>` endpo
 - `/api/epg` returns the same guide data in JSON for dashboards.
 
 Both endpoints understand the same `region`, `group`, and `ids` filters as the playlist route, allowing per-market exports.
-
-## Plugin System
-
-Amps can load optional plugins so you can extend the API without modifying the core project. Plugins are regular Python modules
-declared in your `config.yaml`:
-
-```yaml
-plugins:
-  - module: "my_company.amps_plugins.webhooks"
-    config:
-      secret: "supersecret"
-  - "simple_plugin"
-```
-
-Each plugin module must expose a `register_plugin` function. The loader first attempts the `(app, api_bp, config)` signature so
-you can attach new API endpoints directly to the existing `/api` blueprint. A fallback `(app, config)` signature is also
-supported for plugins that only need the Flask application context.
-
-Example plugin skeleton:
-
-```python
-def register_plugin(app, api_bp, config):
-    @api_bp.route('/plugins/ping', methods=['GET'])
-    def ping():
-        return {'message': f"pong from {config.get('name', 'example')}"}
-```
-
-When the server starts, it attempts to import and register every declared plugin. You can verify the status with the built-in
-endpoint:
-
-```
-GET /api/plugins
-```
-
-The JSON response reports which modules loaded successfully and any that failed to initialize.
 
 ## Stream Configuration Reference
 

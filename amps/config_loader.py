@@ -16,8 +16,7 @@ DEFAULT_CONFIG = {
     },
     'streams': [],
     'scheduled_streams': [],
-    'ffmpeg_profiles': {},
-    'plugins': [],
+    'ffmpeg_profiles': {}
 }
 
 def load_config(config_path: str) -> dict:
@@ -43,8 +42,6 @@ def load_config(config_path: str) -> dict:
                 config['scheduled_streams'] = user_config['scheduled_streams']
             if 'ffmpeg_profiles' in user_config:
                 config['ffmpeg_profiles'] = user_config['ffmpeg_profiles']
-            if 'plugins' in user_config:
-                config['plugins'] = user_config['plugins']
 
         logging.info(f"Loaded configuration from '{config_path}'.")
         logging.info(
