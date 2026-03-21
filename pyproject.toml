@@ -1,6 +1,6 @@
 [project]
 name = "amps-m3u"                         # Your PyPI package name
-version = "0.0.2"
+version = "0.0.3"
 description = "Dynamic M3U generator and FFmpeg-based streaming server."
 readme = "README.md"
 requires-python = ">=3.7"

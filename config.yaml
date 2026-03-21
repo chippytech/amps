@@ -1,100 +1,106 @@
-# config.yaml
-#
-# Amps - Advanced Media Playlist Server Configuration
-
-server:
-  host: "0.0.0.0"
-  port: 5000
-  debug: false # Set to true for development, false for production
-
-auth:
-  enabled: false
-  # Change this to a secure, randomly generated token for production
-  token: "changeme123"
-
-# List of media streams to serve
 streams:
-  - id: 1
-    name: "Sintel (transcoded)"
-    tvg_name: "Sintel HD"
-    epg_id: "sintel.hd"
-    logo: "https://upload.wikimedia.org/wikipedia/commons/7/70/Sintel_poster.jpg"
-    group: "Movies"
-    channel_number: 101
-    # Source: Creative Commons-licensed movie from Blender Foundation
-    source: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"
-    ffmpeg_profile: "copy"
-    description: "Behind-the-scenes footage from the Sintel short film."
-    regions_allowed:
-      - US
-      - CA
-    next_programs:
-      - title: "Director Commentary"
-        start: "2024-05-24T19:30:00Z"
-        description: "Insights from the Sintel creative team."
-      - title: "Making of Sintel"
-        start: "2024-05-24T20:00:00Z"
-    program_feed: "https://example.com/amps/sintel/schedule.json"
-    adaptive_bitrates:
-      - name: "sd"
-        label: "Sintel SD"
-        ffmpeg_profile: "low_bitrate"
-
-  - id: 2
-    name: "Big Buck Bunny (copy)"
-    logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Big_buck_bunny_poster_big.jpg/330px-Big_buck_bunny_poster_big.jpg"
-    group: "Animation"
-    # Source: HLS Test Stream
-    source: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
-    ffmpeg_profile: "copy" # Remuxes the stream without transcoding
-
-  - id: 3
-    name: "DASH MPD Test"
-    source: "http://d3rlna7iyyu8wu.cloudfront.net/DolbyVision_Atmos/profile8.1_DASH/p8.1.mpd"
-    custom_ffmpeg:
-      command: "ffmpeg -re -i {source} -c copy -metadata service_name='Dolby Atmos Demo' -f mpegts pipe:1"
-      shell: false
-    regions_blocked:
-      - CN
-      - RU
-
-  - id: 4
-    name: "YouTube (yt-dlp)"
-    source: "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
-    ffmpeg_profile: "copy"
-    use_yt_dlp: true
-    input_options:
-      protocol_whitelist: "file,http,https,tcp,tls,crypto"
-
-# Reusable FFmpeg command profiles. The options are passed to ffmpeg-python's .output() method.
+- id: 1
+  name: Sintel (transcoded)
+  tvg_name: Sintel HD
+  epg_id: sintel.hd
+  logo: https://upload.wikimedia.org/wikipedia/commons/7/70/Sintel_poster.jpg
+  group: Movies
+  channel_number: 101
+  source: https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4
+  ffmpeg_profile: copy
+  description: Behind-the-scenes footage from the Sintel short film.
+  regions_allowed:
+  - US
+  - CA
+  next_programs:
+  - title: Sintel Encore
+    start: '2030-01-01T09:00:00Z'
+    end: '2030-01-01T10:00:00Z'
+    description: A future placeholder programme used to demonstrate XMLTV import.
+  program_feed: https://example.com/amps/sintel/schedule.json
+  adaptive_bitrates:
+  - name: sd
+    label: Sintel SD
+    ffmpeg_profile: low_bitrate
+- id: 2
+  name: Big Buck Bunny (copy)
+  logo: https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Big_buck_bunny_poster_big.jpg/330px-Big_buck_bunny_poster_big.jpg
+  group: Animation
+  source: https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+  ffmpeg_profile: copy
+- id: 3
+  name: DASH MPD Test
+  source: http://d3rlna7iyyu8wu.cloudfront.net/DolbyVision_Atmos/profile8.1_DASH/p8.1.mpd
+  custom_ffmpeg:
+    command: ffmpeg -re -i {source} -c copy -metadata service_name='Dolby Atmos Demo'
+      -f mpegts pipe:1
+    shell: false
+  regions_blocked:
+  - CN
+  - RU
+- id: 4
+  name: YouTube (yt-dlp)
+  source: https://www.youtube.com/watch?v=aqz-KE-bpKQ
+  ffmpeg_profile: copy
+  use_yt_dlp: true
+  input_options:
+    protocol_whitelist: file,http,https,tcp,tls,crypto
+scheduled_streams: []
 ffmpeg_profiles:
   copy:
-    vcodec: "copy"
-    acodec: "copy"
-    format: "mpegts"     # MPEG Transport Stream is required for streaming pipe output
-
+    vcodec: copy
+    acodec: copy
+    format: mpegts
   low_bitrate:
-    vcodec: "libx264"
-    preset: "fast"
-    b:v: "800k"         # Video bitrate
-    maxrate: "1000k"
-    bufsize: "1500k"
-    acodec: "aac"
-    b:a: "128k"         # Audio bitrate
-    format: "mpegts"
-
+    vcodec: libx264
+    preset: fast
+    b:v: 800k
+    maxrate: 1000k
+    bufsize: 1500k
+    acodec: aac
+    b:a: 128k
+    format: mpegts
   h264_720p:
-    vcodec: "libx264"
-    preset: "medium"
-    vf: "scale=-1:720"  # Scale to 720p height, maintaining aspect ratio
-    b:v: "2500k"
-    acodec: "aac"
-    b:a: "192k"
-    format: "mpegts"
-
+    vcodec: libx264
+    preset: medium
+    vf: scale=-1:720
+    b:v: 2500k
+    acodec: aac
+    b:a: 192k
+    format: mpegts
   mse_fragmented:
-    vcodec: "libx264"
-    preset: "veryfast"
-    acodec: "aac"
-    b:a: "128k"
-    output_format: "mse"   # Emits fragmented MP4 for browser MSE pipelines
+    vcodec: libx264
+    preset: veryfast
+    acodec: aac
+    b:a: 128k
+    output_format: mse
+plugins: []
+webhooks:
+- url: https://example.com/hooks/amps
+  events:
+  - stream_started
+  - stream_stopped
+  - recording_started
+  - recording_stopped
+  - epg_refreshed
+  secret: supersecret
+epg_sources:
+- name: demo-xmltv
+  path: ./assets/demo.xml
+  match_on: epg_id
+  refresh_interval_minutes: 60
+auth:
+  enabled: false
+  token: changeme123
+  api_keys:
+  - name: operator-ui
+    key: replace-me-with-a-long-secret
+    role: admin
+  - name: viewer-app
+    key: replace-me-with-a-viewer-secret
+    role: viewer
+server:
+  host: 0.0.0.0
+  port: 5000
+  debug: false
+data_root: ./data

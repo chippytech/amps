@@ -23,7 +23,7 @@ It's designed to be a developer-friendly, modular, and robust solution for perso
 - **Static Manifests:** HLS playlists and DASH manifests are written to a temp media directory and served via `/hls/<id>/index.m3u8` and `/dash/<id>/manifest.mpd`.
 - **yt-dlp Integration:** Resolve complex streaming services (YouTube, Twitch, etc.) into direct FFmpeg inputs on demand.
 - **YAML Configuration:** All streams and FFmpeg profiles are defined in a simple, human-readable `config.yaml`.
-- **REST API:** A simple API to list, add, update, and delete streams in-memory without restarting the server.
+- **REST API + Persistence:** Manage streams through the API and persist runtime changes to a local state store, then sync snapshots back to `config.yaml`.
 - **XMLTV + EPG Feed:** Export upcoming programs as XMLTV via `/epg.xml` or JSON through `/api/epg` for guide ingestion.
 - **Adaptive Bitrate Variants:** Configure per-channel variants that swap FFmpeg profiles on demand for low/high bitrate viewers.
 - **Region Locking:** Allow or block specific ISO country codes per channel and automatically filter playlists by region.
@@ -31,12 +31,16 @@ It's designed to be a developer-friendly, modular, and robust solution for perso
 - **Custom FFmpeg Pipelines:** Override the FFmpeg command per channel when you need full control over how the stream is produced.
 - **Protocol-Friendly Inputs:** Add FFmpeg input options to unlock RTMP, DVB/IP, DTV, multicast and other specialised transports.
 - **Audio-Only Endpoints:** Expose lightweight AAC outputs at `/audio/<id>` for radio or podcast-style listening.
-- **Token Authentication:** Secure your streams with a shared token, passed via headers or URL parameters.
+- **Role-Based Auth:** Use the original shared token or optional role-based API keys for viewer/admin separation.
 - **Robust Process Management:** Automatically restarts broken streams on request and gracefully cleans up FFmpeg processes on shutdown.
 - **Containerized:** Includes a `Dockerfile` for easy, production-ready deployment.
 - **CLI Interface:** Manage the server with simple commands like `amps serve` and `amps list`.
 - **Scheduled Streams:** Define time-bound channels that automatically activate and retire using APScheduler.
 - **Plugin Hooks:** Load custom plugins that attach new API endpoints or behaviors without modifying core code.
+- **Stream Health + Metrics:** Track per-stream health, active viewers, restart history, and recording state through `/api/status` and `/api/streams/<id>/status`.
+- **Recording + Clip Export:** Start and stop archive recordings per stream, list saved recordings, and export clips from them via the API.
+- **XMLTV Ingestion Jobs:** Refresh external XMLTV feeds into channel schedules on-demand or on an interval with APScheduler.
+- **Built-in Webhooks:** Push lifecycle events such as stream starts, failures, recordings, and EPG refreshes to external automation endpoints.
 
 ## Architecture
 
@@ -342,3 +346,27 @@ PUT  /api/streams/<id>/programs
 ```
 
 The `PUT` body should be a JSON array of program objects. Each object must contain a `title` and can optionally include `start` and `description` fields.
+
+
+## New operator APIs
+
+- `GET /api/status`: fleet-wide stream health, viewer counts, recording state, and EPG refresh status.
+- `GET /api/streams/<id>/status`: one-stream health summary.
+- `POST /api/streams/<id>/restart`: request a stream restart.
+- `POST /api/streams/<id>/recordings/start` and `/stop`: start/stop archival recordings.
+- `GET /api/recordings`: list saved recordings.
+- `POST /api/recordings/<id>/clip`: export a clip from a saved recording using `recording_file`, `start`, and `end`.
+- `GET /api/epg/sources` and `POST /api/epg/sources/<name>/refresh`: inspect and refresh imported XMLTV feeds.
+- `POST /api/admin/save`: write the current runtime snapshot back to `config.yaml` and the persisted state store.
+
+## Persistence
+
+Amps now keeps a JSON runtime snapshot under `data/runtime_state.json` by default. API writes update the in-memory config and the persisted state. Use `POST /api/admin/save` when you want to sync the current runtime snapshot back into your configured `config.yaml`.
+
+## Webhooks
+
+Configure webhook targets under `webhooks:` in `config.yaml`. Each entry accepts a `url`, optional `events` list, and optional `secret`. When a secret is present, Amps signs the JSON body with `X-Amps-Signature` using HMAC-SHA256.
+
+## XMLTV ingestion
+
+Configure imported EPG sources under `epg_sources:` using either a local `path` or a remote `url`. Use `match_on: epg_id` (default) or `match_on: tvg_name`, and optionally set `refresh_interval_minutes` for scheduled refresh jobs.

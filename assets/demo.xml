@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv source-info-name="Amps Demo" generator-info-name="Amps Demo">
+  <channel id="sintel.hd">
+    <display-name>Sintel HD</display-name>
+  </channel>
+  <programme start="20300101090000 +0000" stop="20300101100000 +0000" channel="sintel.hd">
+    <title>Sintel Encore</title>
+    <desc>A future placeholder programme used to demonstrate XMLTV import.</desc>
+  </programme>
+</tv>
