@@ -1,4 +1,4 @@
 """Amps package metadata."""
 
 # Keep the version in sync with ``pyproject.toml``.
-__version__ = "0.0.2"
+__version__ = "0.0.3"

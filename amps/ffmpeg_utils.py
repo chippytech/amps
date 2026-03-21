@@ -1,15 +1,18 @@
 # amps/ffmpeg_utils.py
 
+from __future__ import annotations
+
+import atexit
 import ffmpeg
 import logging
+import shlex
 import shutil
 import subprocess
 import tempfile
 import threading
-import atexit
-import shlex
+import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union, List, Any
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 try:
     import yt_dlp
@@ -18,10 +21,50 @@ except ImportError:  # pragma: no cover - dependency should be installed, but gu
 
 # Global dictionary to hold running FFmpeg processes and associated data
 # Structure: { (stream_id, variant): {'process': Popen_object, 'lock': Lock_object} }
-RUNNING_PROCESSES: Dict[Tuple[int, str], Dict] = {}
+RUNNING_PROCESSES: Dict[Tuple[int, str], Dict[str, Any]] = {}
+PROCESS_STATS: Dict[Tuple[int, str], Dict[str, Any]] = {}
+EVENT_LISTENER: Optional[Callable[[str, Dict[str, Any]], None]] = None
 DEFAULT_VARIANT_KEY = 'default'
 OUTPUT_BASE = Path(tempfile.gettempdir()) / 'amps_media'
 OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
+
+
+def set_event_listener(listener: Optional[Callable[[str, Dict[str, Any]], None]]):
+    global EVENT_LISTENER
+    EVENT_LISTENER = listener
+
+
+def _emit_event(event: str, payload: Dict[str, Any]):
+    if EVENT_LISTENER:
+        try:
+            EVENT_LISTENER(event, payload)
+        except Exception as exc:  # pragma: no cover - defensive only
+            logging.error('Event listener failure for %s: %s', event, exc)
+
+
+def _now_iso() -> str:
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def _default_stats(stream_id: int, variant_key: str) -> Dict[str, Any]:
+    return {
+        'stream_id': stream_id,
+        'variant': variant_key,
+        'starts': 0,
+        'restart_count': 0,
+        'last_start_at': None,
+        'last_stop_at': None,
+        'last_exit_code': None,
+        'last_error': None,
+        'last_stderr': None,
+        'last_source': None,
+    }
+
+
+def _stats_for(key: Tuple[int, str]) -> Dict[str, Any]:
+    if key not in PROCESS_STATS:
+        PROCESS_STATS[key] = _default_stats(key[0], key[1])
+    return PROCESS_STATS[key]
 
 
 def _resolve_stream_source(stream_config: dict) -> Tuple[Optional[str], Dict[str, Any]]:
@@ -32,8 +75,6 @@ def _resolve_stream_source(stream_config: dict) -> Tuple[Optional[str], Dict[str
         logging.error("Stream '%s' is missing a source URL.", stream_config.get('name', stream_config.get('id')))
         return None, {}
 
-    # Normalised configuration for yt-dlp usage. We support either the legacy
-    # `use_yt_dlp` boolean or the richer `source_handler` mapping.
     handler_conf = stream_config.get('source_handler') or {}
 
     if stream_config.get('use_yt_dlp') and not handler_conf:
@@ -63,7 +104,6 @@ def _resolve_stream_source(stream_config: dict) -> Tuple[Optional[str], Dict[str
         'skip_download': True,
     }
 
-    # Allow users to pass additional yt-dlp options via `options` mapping.
     extra_opts = handler_conf.get('options')
     if isinstance(extra_opts, dict):
         ydl_opts.update(extra_opts)
@@ -108,18 +148,15 @@ def _resolve_stream_source(stream_config: dict) -> Tuple[Optional[str], Dict[str
 
 
 def _prepare_custom_ffmpeg_command(stream_config: dict) -> Optional[Tuple[Union[str, List[str]], bool, Optional[dict], Optional[str]]]:
-    """Builds a custom FFmpeg command for a stream if configured."""
-
     custom_conf = stream_config.get('custom_ffmpeg')
     if not custom_conf:
         return None
 
-    # Allow shorthand string for simple commands
     if isinstance(custom_conf, str):
         custom_conf = {'command': custom_conf}
 
     if not isinstance(custom_conf, dict):
-        logging.error("custom_ffmpeg configuration must be a string or mapping.")
+        logging.error('custom_ffmpeg configuration must be a string or mapping.')
         return None
 
     command_template = custom_conf.get('command')
@@ -155,16 +192,12 @@ def _prepare_custom_ffmpeg_command(stream_config: dict) -> Optional[Tuple[Union[
 
 
 def _build_output_path(stream_id: int, variant_key: str, filename: str) -> Path:
-    """Constructs a deterministic output path for generated manifests and segments."""
-
     target_dir = OUTPUT_BASE / str(stream_id) / variant_key
     target_dir.mkdir(parents=True, exist_ok=True)
     return target_dir / filename
 
 
 def _clean_output_path(path: Path):
-    """Removes stale output for a variant before starting a new process."""
-
     if path.exists():
         try:
             if path.is_file():
@@ -172,13 +205,10 @@ def _clean_output_path(path: Path):
             else:
                 shutil.rmtree(path)
         except OSError:
-            # Best-effort cleanup; continue even if deletion fails.
-            logging.debug("Failed to clean previous output at %s", path)
+            logging.debug('Failed to clean previous output at %s', path)
 
 
 def _apply_hwaccel(input_stream, hwaccel_conf: Optional[dict]):
-    """Adds hardware acceleration arguments when requested."""
-
     if not hwaccel_conf:
         return input_stream, []
 
@@ -202,8 +232,6 @@ def _apply_hwaccel(input_stream, hwaccel_conf: Optional[dict]):
 
 
 def _build_hls_output(stream_id: int, variant_key: str, ffmpeg_kwargs: dict, ll_hls: bool = False) -> Tuple[str, Dict[str, Any]]:
-    """Prepares an HLS/LL-HLS output configuration."""
-
     playlist_path = _build_output_path(stream_id, variant_key, 'index.m3u8')
     _clean_output_path(playlist_path.parent)
     hls_flags = ffmpeg_kwargs.pop('hls_flags', '')
@@ -225,8 +253,6 @@ def _build_hls_output(stream_id: int, variant_key: str, ffmpeg_kwargs: dict, ll_
 
 
 def _build_dash_output(stream_id: int, variant_key: str, ffmpeg_kwargs: dict) -> Tuple[str, Dict[str, Any]]:
-    """Prepares DASH output configuration."""
-
     manifest_path = _build_output_path(stream_id, variant_key, 'manifest.mpd')
     _clean_output_path(manifest_path.parent)
     output_kwargs = {
@@ -245,40 +271,36 @@ def _build_audio_only_kwargs(ffmpeg_kwargs: dict) -> Dict[str, Any]:
     audio_kwargs.update(ffmpeg_kwargs)
     return audio_kwargs
 
-def _log_stderr(stream_name: str, stderr_pipe):
-    """
-    Reads from a process's stderr pipe and logs each line for debugging.
-    """
+
+def _log_stderr(stream_name: str, process_key: Tuple[int, str], stderr_pipe):
     for line in iter(stderr_pipe.readline, b''):
-        logging.getLogger('ffmpeg').info(f"[{stream_name}] {line.decode('utf-8').strip()}")
+        message = line.decode('utf-8', errors='replace').strip()
+        if message:
+            _stats_for(process_key)['last_stderr'] = message
+        logging.getLogger('ffmpeg').info('[%s] %s', stream_name, message)
+
 
 def get_or_start_stream_process(
     stream_config: dict,
     ffmpeg_profile: dict,
     process_variant: Optional[str] = None,
 ) -> Optional[subprocess.Popen]:
-    """
-    Retrieves a running FFmpeg process for a stream or starts a new one.
-    This function is thread-safe.
-    """
     stream_id = stream_config['id']
-    stream_name = stream_config.get('name', f"Stream {stream_id}")
-
-    # Initialize stream entry if not present
+    stream_name = stream_config.get('name', f'Stream {stream_id}')
     variant_key = process_variant or DEFAULT_VARIANT_KEY
     process_key = (stream_id, variant_key)
 
     if process_key not in RUNNING_PROCESSES:
         RUNNING_PROCESSES[process_key] = {
             'process': None,
-            'lock': threading.Lock()
+            'lock': threading.Lock(),
         }
 
     with RUNNING_PROCESSES[process_key]['lock']:
         proc_data = RUNNING_PROCESSES[process_key]
         process = proc_data.get('process')
+        stats = _stats_for(process_key)
 
-        # Check if process exists and is running
         if process and process.poll() is None:
             logging.info(
                 "Returning existing FFmpeg process for stream '%s' (variant=%s, PID=%s)",
@@ -288,14 +310,17 @@ def get_or_start_stream_process(
             )
             return process
 
-        # If process is dead or doesn't exist, start a new one
+        if process and process.poll() is not None:
+            stats['last_exit_code'] = process.returncode
+            stats['last_stop_at'] = _now_iso()
+
         logging.info("Starting new FFmpeg process for stream '%s' (variant=%s)", stream_name, variant_key)
         try:
             custom_command = _prepare_custom_ffmpeg_command(stream_config)
 
             if custom_command:
                 command, use_shell, env, cwd = custom_command
-                logging.info(f"Launching custom FFmpeg command for '{stream_name}': {command}")
+                logging.info("Launching custom FFmpeg command for '%s': %s", stream_name, command)
                 process = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
@@ -304,52 +329,33 @@ def get_or_start_stream_process(
                     env=env,
                     cwd=cwd,
                 )
-                logging.info(
-                    "Custom FFmpeg process started for '%s' (variant=%s) with PID: %s",
-                    stream_name,
-                    variant_key,
-                    process.pid,
-                )
+                stats['last_source'] = 'custom_ffmpeg'
             else:
                 resolved_source, handler_options = _resolve_stream_source(stream_config)
                 if not resolved_source:
-                    logging.error(
-                        "Could not resolve an input source for stream '%s'.", stream_name
-                    )
+                    logging.error("Could not resolve an input source for stream '%s'.", stream_name)
+                    stats['last_error'] = 'source_resolution_failed'
+                    _emit_event('stream_failed', {'stream_id': stream_id, 'variant': variant_key, 'reason': 'source_resolution_failed'})
                     return None
 
+                stats['last_source'] = resolved_source
                 input_kwargs: Dict[str, Any] = {}
                 input_kwargs.update(handler_options)
 
                 configured_options = stream_config.get('input_options') or {}
                 if configured_options and not isinstance(configured_options, dict):
-                    logging.error(
-                        "Stream '%s' has non-mapping input_options; ignoring the value.",
-                        stream_name,
-                    )
+                    logging.error("Stream '%s' has non-mapping input_options; ignoring the value.", stream_name)
                 else:
                     input_kwargs.update(configured_options)
 
                 input_args = stream_config.get('input_args') or []
                 if input_args and not isinstance(input_args, list):
-                    logging.error(
-                        "Stream '%s' input_args must be a list of arguments; ignoring.",
-                        stream_name,
-                    )
+                    logging.error("Stream '%s' input_args must be a list of arguments; ignoring.", stream_name)
                     input_args = []
-
-                logging.debug(
-                    "FFmpeg input for '%s': source=%s, args=%s, options=%s",
-                    stream_name,
-                    resolved_source,
-                    input_args,
-                    input_kwargs,
-                )
 
                 input_stream = ffmpeg.input(resolved_source, *input_args, **input_kwargs)
 
                 ffmpeg_options = dict(ffmpeg_profile)
-
                 hwaccel_conf = ffmpeg_options.pop('hwaccel', None)
                 input_stream, extra_global_args = _apply_hwaccel(input_stream, hwaccel_conf)
 
@@ -364,14 +370,11 @@ def get_or_start_stream_process(
                     output_kwargs = _build_audio_only_kwargs(output_kwargs)
 
                 if output_format in {'hls', 'll-hls'}:
-                    output_target, format_kwargs = _build_hls_output(stream_id, variant_key, output_kwargs, ll_hls=(output_format == 'll-hls'))
-                    output_kwargs = format_kwargs
+                    output_target, output_kwargs = _build_hls_output(stream_id, variant_key, output_kwargs, ll_hls=(output_format == 'll-hls'))
                 elif output_format == 'dash':
-                    output_target, format_kwargs = _build_dash_output(stream_id, variant_key, output_kwargs)
-                    output_kwargs = format_kwargs
+                    output_target, output_kwargs = _build_dash_output(stream_id, variant_key, output_kwargs)
                 elif output_format == 'rtsp':
-                    # RTSP output requires a URL; we expose a unix socket style path for demo purposes.
-                    output_target = f"rtsp://127.0.0.1:8554/stream_{stream_id}_{variant_key}"
+                    output_target = f'rtsp://127.0.0.1:8554/stream_{stream_id}_{variant_key}'
                 elif output_format == 'audio':
                     output_target = 'pipe:1'
                     output_kwargs = _build_audio_only_kwargs(output_kwargs)
@@ -380,7 +383,7 @@ def get_or_start_stream_process(
                     output_kwargs.setdefault('format', 'mp4')
                     movflags = output_kwargs.get('movflags')
                     default_flags = 'frag_keyframe+empty_moov+default_base_moof'
-                    output_kwargs['movflags'] = f"{movflags}+{default_flags}" if movflags else default_flags
+                    output_kwargs['movflags'] = f'{movflags}+{default_flags}' if movflags else default_flags
                     output_kwargs.setdefault('reset_timestamps', 1)
                 elif output_format in {'websocket', 'ts'}:
                     output_target = 'pipe:1'
@@ -391,35 +394,37 @@ def get_or_start_stream_process(
                     output_stream = output_stream.global_args(*extra_global_args)
 
                 process = output_stream.run_async(pipe_stdout=True, pipe_stderr=True)
-                logging.info(
-                    "FFmpeg process started for '%s' (variant=%s) with PID: %s",
-                    stream_name,
-                    variant_key,
-                    process.pid,
-                )
 
-            # Start a thread to log stderr for this process
+            process.start_time = time.time()
+            stats['starts'] += 1
+            stats['restart_count'] = max(stats['starts'] - 1, 0)
+            stats['last_start_at'] = _now_iso()
+            stats['last_error'] = None
+            proc_data['process'] = process
+            logging.info("FFmpeg process started for '%s' (variant=%s) with PID: %s", stream_name, variant_key, process.pid)
+            _emit_event('stream_started', {'stream_id': stream_id, 'name': stream_name, 'variant': variant_key, 'pid': process.pid})
+
             stderr_thread = threading.Thread(
                 target=_log_stderr,
-                args=(stream_name, process.stderr),
-                daemon=True
+                args=(stream_name, process_key, process.stderr),
+                daemon=True,
             )
             stderr_thread.start()
-
-            proc_data['process'] = process
             return process
 
         except ffmpeg.Error as e:
-            logging.error(f"FFmpeg error for stream '{stream_name}': {e.stderr.decode('utf-8')}")
+            stats['last_error'] = e.stderr.decode('utf-8', errors='replace') if e.stderr else str(e)
+            logging.error("FFmpeg error for stream '%s': %s", stream_name, stats['last_error'])
+            _emit_event('stream_failed', {'stream_id': stream_id, 'name': stream_name, 'variant': variant_key, 'reason': stats['last_error']})
             return None
         except Exception as e:
-            logging.error(f"Failed to start FFmpeg for stream '{stream_name}': {e}")
+            stats['last_error'] = str(e)
+            logging.error("Failed to start FFmpeg for stream '%s': %s", stream_name, e)
+            _emit_event('stream_failed', {'stream_id': stream_id, 'name': stream_name, 'variant': variant_key, 'reason': str(e)})
             return None
 
+
 def stop_stream_process(stream_id: int, process_variant: Optional[str] = None):
-    """
-    Stops a specific FFmpeg process if it is running.
-    """
     keys = [
         key for key in list(RUNNING_PROCESSES.keys())
         if key[0] == stream_id and (process_variant is None or key[1] == process_variant)
@@ -429,34 +434,42 @@ def stop_stream_process(stream_id: int, process_variant: Optional[str] = None):
         with RUNNING_PROCESSES[key]['lock']:
             proc_data = RUNNING_PROCESSES.pop(key)
             process = proc_data.get('process')
+            stats = _stats_for(key)
             if process and process.poll() is None:
-                logging.warning(
-                    "Terminating FFmpeg process for stream ID %s variant '%s' (PID: %s)",
-                    stream_id,
-                    key[1],
-                    process.pid,
-                )
+                logging.warning("Terminating FFmpeg process for stream ID %s variant '%s' (PID: %s)", stream_id, key[1], process.pid)
                 process.terminate()
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    logging.error(f"FFmpeg process {process.pid} did not terminate gracefully, killing.")
+                    logging.error('FFmpeg process %s did not terminate gracefully, killing.', process.pid)
                     process.kill()
-                logging.info(
-                    "Process for stream ID %s variant '%s' stopped.",
-                    stream_id,
-                    key[1],
-                )
+                stats['last_exit_code'] = process.returncode
+                stats['last_stop_at'] = _now_iso()
+                logging.info("Process for stream ID %s variant '%s' stopped.", stream_id, key[1])
+                _emit_event('stream_stopped', {'stream_id': stream_id, 'variant': key[1], 'exit_code': process.returncode})
+
+
+def get_process_snapshot() -> List[Dict[str, Any]]:
+    snapshots: List[Dict[str, Any]] = []
+    for key, stats in PROCESS_STATS.items():
+        process = RUNNING_PROCESSES.get(key, {}).get('process')
+        running = bool(process and process.poll() is None)
+        snapshot = dict(stats)
+        snapshot.update({
+            'running': running,
+            'pid': process.pid if process and running else None,
+            'uptime_seconds': (time.time() - process.start_time) if process and running and hasattr(process, 'start_time') else None,
+        })
+        snapshots.append(snapshot)
+    return snapshots
+
 
 def cleanup_all_processes():
-    """
-    Cleans up all running FFmpeg processes on application exit.
-    """
-    logging.info("Shutting down all active FFmpeg streams...")
+    logging.info('Shutting down all active FFmpeg streams...')
     stream_ids = {key[0] for key in RUNNING_PROCESSES.keys()}
     for stream_id in list(stream_ids):
         stop_stream_process(stream_id)
-    logging.info("Cleanup complete.")
+    logging.info('Cleanup complete.')
 
-# Register the cleanup function to be called on exit
+
 atexit.register(cleanup_all_processes)
